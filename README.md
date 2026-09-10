@@ -56,6 +56,7 @@ Plugin settings live in `~/.config/opencode/plugins/opencode-tts.jsonc`:
 ```jsonc
 {
   "enabled": true,          // false to disable TTS — persisted across sessions
+  "disableForSubagents": false, // true to skip auto-TTS for subagent sessions (spawned via Task tool)
   "mode": "summary",        // "summary" | "full" — persisted across sessions
   "debug": false,
   "backend": "edge_tts",    // "edge_tts" | "say"

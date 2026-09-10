@@ -1,5 +1,5 @@
 import type { Plugin } from "@opencode-ai/plugin"
-import type { AssistantMessage, Message, Part } from "@opencode-ai/sdk"
+import type { AssistantMessage, Message, Part, Session } from "@opencode-ai/sdk"
 import os from "node:os"
 import path from "node:path"
 import { appendFileSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs"
@@ -24,6 +24,7 @@ type MaybeData<T> = T | { data: T }
 
 type TTSPluginConfig = {
   enabled?: boolean
+  disableForSubagents?: boolean
   mode?: "full" | "summary"
   debug?: boolean
   backend?: "edge_tts" | "say"
@@ -43,6 +44,7 @@ const spokenAssistantMessages = new Set<string>()
 const inFlightSessions = new Set<string>()
 const latestAssistantMessageBySession = new Map<string, { messageID: string; providerID?: string; modelID?: string }>()
 const assistantTextByMessage = new Map<string, string>()
+const sessionParentBySession = new Map<string, string | undefined>()
 
 let ttsMode: "full" | "summary" = "summary"
 let ttsEnabled = true
@@ -306,6 +308,19 @@ async function legacyConfigGet(client: Parameters<Plugin>[0]["client"], director
   } as any)
 }
 
+async function isSubagentSession(client: Parameters<Plugin>[0]["client"], sessionID: string): Promise<boolean> {
+  if (sessionParentBySession.has(sessionID)) {
+    return sessionParentBySession.get(sessionID) !== undefined
+  }
+  try {
+    const { data: session } = await client.session.get({ path: { id: sessionID } })
+    sessionParentBySession.set(sessionID, session?.parentID)
+    return session?.parentID !== undefined
+  } catch {
+    return false
+  }
+}
+
 
 async function summarizeText(
   client: Parameters<Plugin>[0]["client"],
@@ -518,6 +533,11 @@ export const OpenCodeTTSPlugin: Plugin = async (pluginInput) => {
         }
       }
 
+      if (event.type === "session.updated") {
+        const info: Session = event.properties.info
+        sessionParentBySession.set(info.id, info.parentID)
+      }
+
       if (event.type !== "session.idle") return
 
       const sessionID = event.properties.sessionID
@@ -543,6 +563,11 @@ export const OpenCodeTTSPlugin: Plugin = async (pluginInput) => {
           : undefined
 
         if (!ttsEnabled) return
+
+        if (getPluginConfig().disableForSubagents && (await isSubagentSession(pluginInput.client, sessionID))) {
+          logLine("event.session.idle.subagent-skip", { sessionID })
+          return
+        }
 
         let summary: string
         if (ttsMode === "full") {
